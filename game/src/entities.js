@@ -29,13 +29,26 @@ function rockVertices(rng, radius) {
 
 export function spawnEmber(state) {
   const { rng } = state;
+  // A few spawns are golden (worth 5 embers, +50 score) or a shield cell
+  // (one free hit). Both are rarer than a plain ember, and both are worth
+  // flying out of the way for.
+  const roll = rng();
+  let kind = 'ember';
+  let radius = EMBER.radius;
+  if (roll < EMBER.goldenChance) {
+    kind = 'golden';
+    radius = 12;
+  } else if (roll < EMBER.goldenChance + EMBER.shieldChance) {
+    kind = 'shield';
+    radius = 11;
+  }
   state.embersList.push({
-    kind: 'ember',
+    kind,
     x: range(rng, 30, FIELD.width - 30),
     y: -20,
     vx: range(rng, -14, 14),
     vy: range(rng, EMBER.driftMin, EMBER.driftMax),
-    r: EMBER.radius,
+    r: radius,
     phase: rng() * Math.PI * 2,
   });
 }
@@ -69,6 +82,43 @@ export function spawnRock(state, kind = 'rock') {
       vx: 0,
       vy: range(rng, 40, 70),
       r: ROCK.chaserRadius,
+      pulse: rng() * Math.PI * 2,
+    });
+    return;
+  }
+  if (kind === 'weaver') {
+    // A rock that weaves across its lane in a sine wave: it blocks a wide
+    // corridor, but its path is readable, so it can be flown around.
+    const baseX = range(rng, 120, FIELD.width - 120);
+    state.hazards.push({
+      kind: 'weaver',
+      x: baseX,
+      baseX,
+      y: -30,
+      vx: 0,
+      vy: ROCK.weaverSpeed * range(rng, 0.85, 1.2),
+      r: ROCK.weaverRadius,
+      rot: rng() * Math.PI * 2,
+      rotSpeed: range(rng, -1.2, 1.2),
+      verts: rockVertices(rng, ROCK.weaverRadius),
+      phase: rng() * Math.PI * 2,
+      age: 0,
+    });
+    return;
+  }
+  if (kind === 'mine') {
+    // A proximity mine: it drifts down slowly, arms when the ship comes
+    // close, then detonates after a short fuse. The blast clears rocks too.
+    state.hazards.push({
+      kind: 'mine',
+      x: range(rng, 60, FIELD.width - 60),
+      y: -30,
+      vx: range(rng, -8, 8),
+      vy: range(rng, 30, 48),
+      r: ROCK.mineRadius,
+      rot: rng() * Math.PI * 2,
+      rotSpeed: range(rng, -1, 1),
+      armed: 0,
       pulse: rng() * Math.PI * 2,
     });
     return;
@@ -135,6 +185,11 @@ export function burstEmber(state, x, y) {
   spawnParticle(state, x, y, { count: 5, color: '#fff3c4', speed: 90, size: 2.5, life: 0.4 });
 }
 
+export function burstGolden(state, x, y) {
+  spawnParticle(state, x, y, { count: 22, color: '#ffd700', speed: 260, size: 4, life: 0.7 });
+  spawnParticle(state, x, y, { count: 10, color: '#fff3c4', speed: 140, size: 3, life: 0.5 });
+}
+
 export function burstHit(state, x, y) {
   spawnParticle(state, x, y, { count: 22, color: '#ff5d5d', speed: 260, size: 4, life: 0.7 });
   spawnParticle(state, x, y, { count: 10, color: '#4de3ff', speed: 180, size: 3, life: 0.6 });
@@ -146,14 +201,34 @@ export function burstNova(state, x, y, radius) {
   state.novaRing = { x, y, r: 12, maxR: radius, life: 0.45, maxLife: 0.45 };
 }
 
+export function burstMine(state, x, y) {
+  spawnParticle(state, x, y, { count: 30, color: '#ff5d5d', speed: 380, size: 4, life: 0.7 });
+  spawnParticle(state, x, y, { count: 14, color: '#ffb347', speed: 240, size: 3, life: 0.55 });
+  spawnParticle(state, x, y, { count: 8, color: '#ffffff', speed: 160, size: 2.5, life: 0.4 });
+  // The blast clears nearby rocks on its first update (see updateEntities):
+  // clearing them here, inside the hazards loop, would corrupt its index.
+  state.blasts.push({ x, y, r: 10, maxR: ROCK.mineBlast, life: 0.4, maxLife: 0.4, hitDone: false, cleared: false });
+  state.shake = Math.max(state.shake, 10);
+}
+
 function outOfField(e, margin = 80) {
   return e.x < -margin || e.x > FIELD.width + margin || e.y < -margin || e.y > FIELD.height + margin;
 }
 
 export function updateEntities(state, dt) {
   const ship = state.ship;
+  const magnet = state.upg && state.upg.magnet;
   for (let i = state.embersList.length - 1; i >= 0; i -= 1) {
     const e = state.embersList[i];
+    if (magnet) {
+      const dx = ship.x - e.x;
+      const dy = ship.y - e.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist < ROCK.magnetRadius && dist > 1) {
+        e.vx += (dx / dist) * 520 * dt;
+        e.vy += (dy / dist) * 520 * dt;
+      }
+    }
     e.x += e.vx * dt;
     e.y += e.vy * dt;
     e.phase += dt * 3;
@@ -175,6 +250,26 @@ export function updateEntities(state, dt) {
       h.vx = Math.cos(next) * speed;
       h.vy = Math.sin(next) * speed;
       h.pulse += dt * 6;
+    } else if (h.kind === 'weaver') {
+      h.age += dt;
+      // The x comes from the sine; the common step below moves y.
+      h.x = h.baseX + Math.sin(h.age * ROCK.weaverFreq + h.phase) * ROCK.weaverAmp;
+    } else if (h.kind === 'mine') {
+      h.pulse += dt * 5;
+      const dist = Math.hypot(ship.x - h.x, ship.y - h.y);
+      if (h.armed === 0 && dist < ROCK.mineTrigger && state.screen === 'playing') {
+        h.armed = ROCK.mineFuse;
+      }
+      if (h.armed > 0) {
+        h.armed -= dt;
+        if (h.armed <= 0) {
+          // Detonate and remove only this mine; the blast clears rocks
+          // on its own first update, outside this loop.
+          burstMine(state, h.x, h.y);
+          state.hazards.splice(i, 1);
+          continue;
+        }
+      }
     }
     h.x += h.vx * dt;
     h.y += h.vy * dt;
@@ -195,6 +290,24 @@ export function updateEntities(state, dt) {
     f.y -= 42 * dt;
     f.life -= dt;
     if (f.life <= 0) state.floaters.splice(i, 1);
+  }
+  for (let i = state.blasts.length - 1; i >= 0; i -= 1) {
+    const b = state.blasts[i];
+    if (!b.cleared) {
+      // First update: the blast clears the rocks caught in it.
+      b.cleared = true;
+      for (let j = state.hazards.length - 1; j >= 0; j -= 1) {
+        const other = state.hazards[j];
+        if (Math.hypot(other.x - b.x, other.y - b.y) < b.maxR) {
+          if (other.kind === 'splitter') spawnSmallRocks(state, other.x, other.y);
+          state.hazards.splice(j, 1);
+          spawnParticle(state, other.x, other.y, { count: 6, color: '#9a8fb0', speed: 150, size: 3, life: 0.4 });
+        }
+      }
+    }
+    b.life -= dt;
+    b.r += (b.maxR - b.r) * Math.min(1, dt * 12);
+    if (b.life <= 0) state.blasts.splice(i, 1);
   }
   if (state.novaRing) {
     const ring = state.novaRing;
