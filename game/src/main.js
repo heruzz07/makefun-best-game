@@ -110,8 +110,14 @@ if (shot !== null) {
     if (steps === 4) accumulator = 0;
     // Clear only what was pending when the frame started (and not already
     // consumed): anything pressed during the frame stays for the next one.
-    for (const code of pendingPresses) input.pressed.delete(code);
-    if (clickedAtStart) input.mouse.clicked = false;
+    // And only clear when the world actually stepped: a press that arrives
+    // in a frame where the world did not step must survive to the next
+    // frame, or inputs get dropped whenever the display runs faster than
+    // the 60 Hz simulation (a real bug — a keypress could vanish).
+    if (steps > 0) {
+      for (const code of pendingPresses) input.pressed.delete(code);
+      if (clickedAtStart) input.mouse.clicked = false;
+    }
     drawFrame();
     announce();
     requestAnimationFrame(frame);

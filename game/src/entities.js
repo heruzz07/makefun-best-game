@@ -2,7 +2,7 @@
 // floating score text. Spawning and movement live here; collisions and scoring
 // live in world.js, drawing in render.js.
 
-import { EMBER, FIELD, ROCK, SHIP, SPAWN } from './config.js';
+import { DART, ELITE, EMBER, FIELD, METEOR, ROCK, SHIP, SPAWN, VEIN } from './config.js';
 import { chance, pick, range } from './random.js';
 
 export function makeShip() {
@@ -53,11 +53,59 @@ export function spawnEmber(state) {
   });
 }
 
+export function spawnEmberVein(state) {
+  const { rng } = state;
+  // A tight ring of embers, centred where a dive is a decision: never at the
+  // very edge, sometimes high (a long dive) and sometimes low (a quick grab).
+  const cx = range(rng, 160, FIELD.width - 160);
+  const cy = range(rng, 120, FIELD.height * 0.55);
+  const count = Math.floor(range(rng, VEIN.embersMin, VEIN.embersMax + 1));
+  for (let i = 0; i < count; i += 1) {
+    const angle = (i / count) * Math.PI * 2 + rng() * 0.5;
+    const d = range(rng, VEIN.radius * 0.55, VEIN.radius);
+    state.embersList.push({
+      kind: 'ember',
+      x: cx + Math.cos(angle) * d,
+      y: cy + Math.sin(angle) * d,
+      vx: range(rng, -10, 10),
+      vy: range(rng, EMBER.driftMin, EMBER.driftMax),
+      r: EMBER.radius,
+      phase: rng() * Math.PI * 2,
+    });
+  }
+  // A fading golden ring marks the vein's centre, so the cluster reads as
+  // one rich spot rather than a coincidence of spawns.
+  state.veins.push({ x: cx, y: cy, r: VEIN.radius + 26, life: 2.2, maxLife: 2.2 });
+  spawnFloater(state, cx, cy - VEIN.radius - 18, 'EMBER VEIN!', '#ffd700');
+  spawnParticle(state, cx, cy, { count: 18, color: '#ffd700', speed: 220, size: 3, life: 0.7 });
+}
+
 export function spawnRock(state, kind = 'rock') {
   const { rng } = state;
   const wave = state.wave;
-  const speed = range(rng, SPAWN.rockSpeedMin, SPAWN.rockSpeedMax)
-    + (wave - 1) * SPAWN.rockSpeedPerWave;
+  // An elite wave flies faster.
+  const eliteSpeed = state.elite ? ELITE.speedFactor : 1;
+  const speed = (range(rng, SPAWN.rockSpeedMin, SPAWN.rockSpeedMax)
+    + (wave - 1) * SPAWN.rockSpeedPerWave) * eliteSpeed;
+  if (kind === 'dart') {
+    // A comet on a diagonal: it enters from a random corner edge and streaks
+    // across the field in a straight line. Fast, small, and loud.
+    const fromLeft = chance(rng, 0.5);
+    const fromTop = chance(rng, 0.5);
+    const vx = (fromLeft ? 1 : -1) * range(rng, DART.speedMin, DART.speedMax) * 0.72;
+    const vy = (fromTop ? 1 : -1) * range(rng, DART.speedMin, DART.speedMax) * 0.72;
+    state.hazards.push({
+      kind: 'dart',
+      x: fromLeft ? -20 : FIELD.width + 20,
+      y: fromTop ? range(rng, 0, FIELD.height * 0.4) : range(rng, FIELD.height * 0.6, FIELD.height),
+      vx,
+      vy,
+      r: DART.radius,
+      pulse: rng() * Math.PI * 2,
+      trail: [],
+    });
+    return;
+  }
   if (kind === 'sweeper') {
     const fromLeft = chance(rng, 0.5);
     const r = range(rng, ROCK.radiusMin, ROCK.radiusMin + 10);
@@ -155,6 +203,22 @@ export function spawnSmallRocks(state, x, y) {
       verts: rockVertices(rng, ROCK.smallRadius),
     });
   }
+}
+
+export function spawnMeteor(state) {
+  const { rng } = state;
+  // A background streak: it starts high, falls diagonally, and never touches
+  // play. Drawn behind everything, so it is depth, not a threat.
+  const fromLeft = chance(rng, 0.5);
+  const speed = range(rng, METEOR.speedMin, METEOR.speedMax);
+  state.meteors.push({
+    x: fromLeft ? range(rng, 0, FIELD.width * 0.55) : range(rng, FIELD.width * 0.45, FIELD.width),
+    y: range(rng, -20, FIELD.height * 0.3),
+    vx: (fromLeft ? 1 : -1) * speed * 0.55,
+    vy: speed * 0.75,
+    life: range(rng, 0.7, 1.1),
+    maxLife: 1.1,
+  });
 }
 
 export function spawnParticle(state, x, y, { count = 10, color = '#ffd166', speed = 160, size = 3, life = 0.6 } = {}) {
@@ -270,11 +334,29 @@ export function updateEntities(state, dt) {
           continue;
         }
       }
+    } else if (h.kind === 'dart') {
+      // A comet keeps a short tail of where it has been.
+      h.pulse += dt * 9;
+      h.trail.push({ x: h.x, y: h.y });
+      if (h.trail.length > 7) h.trail.shift();
     }
     h.x += h.vx * dt;
     h.y += h.vy * dt;
     if (h.rot !== undefined) h.rot += h.rotSpeed * dt;
     if (outOfField(h, 120)) state.hazards.splice(i, 1);
+  }
+  // Vein markers fade; meteors streak and fade.
+  for (let i = state.veins.length - 1; i >= 0; i -= 1) {
+    const v = state.veins[i];
+    v.life -= dt;
+    if (v.life <= 0) state.veins.splice(i, 1);
+  }
+  for (let i = state.meteors.length - 1; i >= 0; i -= 1) {
+    const m = state.meteors[i];
+    m.x += m.vx * dt;
+    m.y += m.vy * dt;
+    m.life -= dt;
+    if (m.life <= 0 || outOfField(m, 60)) state.meteors.splice(i, 1);
   }
   for (let i = state.particles.length - 1; i >= 0; i -= 1) {
     const p = state.particles[i];

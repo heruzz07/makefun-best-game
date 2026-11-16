@@ -22,8 +22,10 @@ function pilotInput() {
     axis() {
       return { x: this.pilot.x, y: this.pilot.y };
     },
-    consume() {
-      return false;
+    consume(code) {
+      // The autopilot takes the first upgrade, so a forge never stalls a
+      // scene on the upgrade screen.
+      return code === 'Digit1';
     },
     consumeAny(codes) {
       if (this.pilot.nova && codes.includes('Space')) {

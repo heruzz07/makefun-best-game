@@ -76,6 +76,15 @@ export function createAudio() {
       this.tone({ frequency: base * 2, duration: 0.07, type: 'triangle', volume: 0.16 });
     },
 
+    // A combo milestone: a quick rising arpeggio, brighter the hotter the
+    // streak, so a milestone sounds like an event.
+    combo(combo) {
+      const base = 660 + Math.min(combo, 15) * 18;
+      [0, 1, 2].forEach((i) => {
+        this.tone({ frequency: base * (1 + i * 0.25), duration: 0.12, type: 'triangle', volume: 0.32, delay: i * 0.06 });
+      });
+    },
+
     hit() {
       this.burst({ duration: 0.3, volume: 0.7, frequency: 900 });
       this.tone({ frequency: 140, endFrequency: 45, duration: 0.3, type: 'sawtooth', volume: 0.4 });

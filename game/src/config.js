@@ -59,6 +59,45 @@ export const EMBER = {
 
 export const GOLDEN = { value: 5, score: 50, radius: 12 };
 
+// An ember vein: a rich cluster worth diving for. It is a risk/reward beat —
+// six to eight embers in one tight ring, announced when it appears, gone
+// when it drifts off the bottom. The first vein arrives early so a new
+// player sees the idea in their first minute.
+export const VEIN = {
+  embersMin: 6,
+  embersMax: 8,
+  radius: 52,
+  firstInSeconds: 18,
+  intervalSeconds: 34,
+};
+
+// A dart: a small fast comet that streaks diagonally across the field. It is
+// the only hazard that comes in on a diagonal, so it reads as a new dodge
+// and it punishes sitting still in a lane.
+export const DART = {
+  radius: 11,
+  speedMin: 380,
+  speedMax: 470,
+  color: '#ff9d5c',
+};
+
+// Every fifth wave is ELITE: spawns come faster and rocks fly faster, and
+// the banner says so. Wave 5 is the last wave before the Beacon, so the
+// climax of a run is an elite wave.
+export const ELITE = { everyWaves: 5, spawnFactor: 0.72, speedFactor: 1.15 };
+
+// Freeze frames: a hit stops the world for 50 ms, a nova for 35 ms. The
+// freeze is the punch — the screen shake alone was not enough.
+export const HITSTOP = { hitSeconds: 0.05, novaSeconds: 0.035 };
+
+// A combo milestone every 5: a big centre floater and a rising sound, so a
+// hot streak feels like an event, not just a number.
+export const COMBO_MILESTONE = 5;
+
+// Shooting stars: background meteors, a thin streak every few seconds, for
+// depth. They never touch play — they are drawn behind everything.
+export const METEOR = { intervalMin: 4, intervalMax: 8, speedMin: 420, speedMax: 620 };
+
 export const NOVA = {
   cost: 30,
   radius: 175,
@@ -103,16 +142,18 @@ export const SPAWN = {
   rockSpeedMax: 110,
   rockSpeedPerWave: 9,
   // Chasers appear from wave 2, weavers from wave 3, splitters and mines
-  // from wave 4, sweepers from wave 6.
+  // from wave 4, sweepers from wave 6, darts from wave 4.
   chaserFromWave: 2,
   weaverFromWave: 3,
   splitterFromWave: 4,
   mineFromWave: 4,
+  dartFromWave: 4,
   sweeperFromWave: 6,
   chaserInterval: 7.0,
   weaverInterval: 8.0,
   splitterInterval: 9.0,
   mineInterval: 10.0,
+  dartInterval: 12.0,
   sweeperInterval: 11.0,
 };
 

@@ -2,7 +2,7 @@
 // background, entities, HUD, and the title / pause / game-over / win screens.
 // Screenshots are frames of this file, so it carries the game's look.
 
-import { FIELD, PALETTE, WIN_STARS } from './config.js';
+import { DART, FIELD, PALETTE, WIN_STARS } from './config.js';
 
 function roundRect(ctx, x, y, w, h, r) {
   ctx.beginPath();
@@ -107,6 +107,22 @@ function drawBackground(ctx, state) {
     ctx.fill();
   }
   ctx.globalAlpha = 1;
+  // Shooting stars: thin bright streaks, drawn behind everything.
+  for (const m of state.meteors) {
+    const alpha = Math.max(0, m.life / m.maxLife) * 0.55;
+    const len = 46;
+    const dx = (m.vx / Math.hypot(m.vx, m.vy)) * len;
+    const dy = (m.vy / Math.hypot(m.vx, m.vy)) * len;
+    const grad = ctx.createLinearGradient(m.x, m.y, m.x - dx, m.y - dy);
+    grad.addColorStop(0, `rgba(232, 238, 255, ${alpha})`);
+    grad.addColorStop(1, 'rgba(232, 238, 255, 0)');
+    ctx.strokeStyle = grad;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(m.x, m.y);
+    ctx.lineTo(m.x - dx, m.y - dy);
+    ctx.stroke();
+  }
 }
 
 function drawEmber(ctx, e) {
@@ -344,11 +360,59 @@ function drawChaser(ctx, h, time) {
   ctx.restore();
 }
 
+function drawDart(ctx, h, time) {
+  // A comet: a bright head and a fading tail, so it reads as fast.
+  const angle = Math.atan2(h.vy, h.vx);
+  ctx.save();
+  ctx.translate(h.x, h.y);
+  if (h.trail.length > 1) {
+    for (let i = 1; i < h.trail.length; i += 1) {
+      const alpha = (i / h.trail.length) * 0.45;
+      ctx.strokeStyle = `rgba(255, 157, 92, ${alpha})`;
+      ctx.lineWidth = 1 + (i / h.trail.length) * 4;
+      ctx.beginPath();
+      ctx.moveTo(h.trail[i - 1].x - h.x, h.trail[i - 1].y - h.y);
+      ctx.lineTo(h.trail[i].x - h.x, h.trail[i].y - h.y);
+      ctx.stroke();
+    }
+  }
+  ctx.rotate(angle);
+  const flicker = 1 + 0.12 * Math.sin(time * 18 + h.pulse);
+  ctx.fillStyle = DART.color;
+  ctx.beginPath();
+  ctx.moveTo(h.r * 1.6 * flicker, 0);
+  ctx.lineTo(-h.r * 0.9, -h.r * 0.75);
+  ctx.lineTo(-h.r * 0.4, 0);
+  ctx.lineTo(-h.r * 0.9, h.r * 0.75);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = '#fff3c4';
+  ctx.beginPath();
+  ctx.arc(h.r * 0.4, 0, h.r * 0.34, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
 function drawEntities(ctx, state) {
+  // A vein's golden ring marks the rich spot before the embers are drawn.
+  for (const v of state.veins) {
+    const alpha = Math.max(0, v.life / v.maxLife) * 0.5;
+    ctx.strokeStyle = `rgba(255, 215, 0, ${alpha})`;
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.arc(v.x, v.y, v.r, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = `rgba(255, 215, 0, ${alpha * 0.4})`;
+    ctx.lineWidth = 6;
+    ctx.beginPath();
+    ctx.arc(v.x, v.y, v.r, 0, Math.PI * 2);
+    ctx.stroke();
+  }
   for (const e of state.embersList) drawEmber(ctx, e);
   for (const h of state.hazards) {
     if (h.kind === 'chaser') drawChaser(ctx, h, state.time);
     else if (h.kind === 'mine') drawMine(ctx, h, state.time);
+    else if (h.kind === 'dart') drawDart(ctx, h, state.time);
     else drawRock(ctx, h);
   }
   // The ship flies only while playing (or paused, or choosing an upgrade):
@@ -441,6 +505,11 @@ function drawHud(ctx, state) {
   ctx.font = '600 15px "Segoe UI", system-ui, sans-serif';
   ctx.fillStyle = PALETTE.hudDim;
   ctx.fillText(`WAVE ${state.wave}   •   EMBERS ${state.embers}`, 28, 100);
+  if (state.elite) {
+    ctx.fillStyle = '#ff5d5d';
+    ctx.font = '800 15px "Segoe UI", system-ui, sans-serif';
+    ctx.fillText('ELITE', 28 + ctx.measureText(`WAVE ${state.wave}   •   EMBERS ${state.embers}`).width + 12, 100);
+  }
   // The arc, at a glance: five stars to the Beacon, and the embers to the
   // next one. A filled star is forged; an empty one is still to come.
   const toNext = state.embers - state.forged * 100;
@@ -524,7 +593,7 @@ function drawHud(ctx, state) {
     ctx.textAlign = 'center';
     ctx.fillStyle = PALETTE.hudText;
     ctx.font = '600 16px "Segoe UI", system-ui, sans-serif';
-    ctx.fillText('Move: mouse or WASD / arrows   •   Nova: SPACE or click   •   Overdrive: hold SHIFT   •   P: pause   •   M: mute', FIELD.width / 2, FIELD.height - 26);
+    ctx.fillText('Goal: forge 5 stars — 100 embers per star.   Move: mouse or WASD / arrows   •   Nova: SPACE or click   •   Overdrive: hold SHIFT   •   P: pause   •   M: mute', FIELD.width / 2, FIELD.height - 26);
     ctx.globalAlpha = 1;
   }
 }
@@ -545,6 +614,13 @@ function drawBanner(ctx, state) {
     ctx.fillText(b.sub, FIELD.width / 2, 254);
   }
   ctx.restore();
+}
+
+function formatTime(seconds) {
+  const total = Math.max(0, Math.floor(seconds));
+  const minutes = Math.floor(total / 60);
+  const secs = total % 60;
+  return `${minutes}:${String(secs).padStart(2, '0')}`;
 }
 
 function drawPanel(ctx, x, y, w, h) {
@@ -583,16 +659,18 @@ function drawTitle(ctx, state) {
     'Collect glowing embers to charge your core —',
     'core is your score multiplier and your nova fuel.',
     'Golden embers are worth 5. Shield cells block one hit.',
+    'Ember veins are rich clusters — dive in, but mind the darts.',
     'Spend 30 core on a nova, or hold SHIFT to overdrive:',
     'burn core for speed and a bigger combo step.',
     'Every 100 embers forges a star: pick 1 of 3 upgrades.',
     'Forge 5 stars to light the Beacon and win.',
+    'Every 5th wave is ELITE: faster, meaner, richer.',
     '',
     'Move: mouse or WASD / arrows      Nova: SPACE or click',
     'Overdrive: SHIFT      Pause: P      Mute: M',
   ];
   lines.forEach((line, i) => {
-    if (line !== '') ctx.fillText(line, cx, 336 + i * 23);
+    if (line !== '') ctx.fillText(line, cx, 336 + i * 21);
   });
   if (state.best > 0) {
     ctx.fillStyle = PALETTE.ember;
@@ -674,7 +752,7 @@ function drawWin(ctx, state) {
   ctx.font = '400 22px "Segoe UI", system-ui, sans-serif';
   ctx.fillText('Five stars forged. The dark is lit.', cx, 250);
 
-  drawPanel(ctx, cx - 280, 286, 560, 262);
+  drawPanel(ctx, cx - 280, 286, 560, 292);
   const rows = [
     ['SCORE', String(state.score)],
     ['BEST', String(state.best)],
@@ -683,6 +761,7 @@ function drawWin(ctx, state) {
     ['BEST COMBO', `x${Math.max(1, state.stats.maxCombo)}`],
     ['GOLDEN EMBERS', String(state.stats.golden)],
     ['UPGRADES TAKEN', String(state.stats.upgrades)],
+    ['TIME', formatTime(state.overAt)],
   ];
   ctx.font = '600 18px "Segoe UI", system-ui, sans-serif';
   rows.forEach(([label, value], i) => {
@@ -719,7 +798,7 @@ function drawOver(ctx, state) {
   ctx.font = '400 22px "Segoe UI", system-ui, sans-serif';
   ctx.fillText('The drift claims another skiff.', cx, 248);
 
-  drawPanel(ctx, cx - 280, 282, 560, 262);
+  drawPanel(ctx, cx - 280, 282, 560, 292);
   const rows = [
     ['SCORE', String(state.score)],
     ['BEST', String(state.best)],
@@ -728,6 +807,7 @@ function drawOver(ctx, state) {
     ['WAVE REACHED', String(state.wave)],
     ['BEST COMBO', `x${Math.max(1, state.stats.maxCombo)}`],
     ['GOLDEN EMBERS', String(state.stats.golden)],
+    ['TIME', formatTime(state.overAt)],
   ];
   ctx.font = '600 18px "Segoe UI", system-ui, sans-serif';
   rows.forEach(([label, value], i) => {

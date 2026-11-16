@@ -4,12 +4,14 @@
 // Everything the render loop draws comes from this state, and nothing else.
 
 import {
-  EMBER, FIELD, FORGE_BONUS, FORGE_CALM_SECONDS, FORGE_EVERY_EMBERS,
-  GOLDEN, HULL, KEYS, NOVA, OVERDRIVE, SHIP, SPAWN, UPGRADES, WIN_STARS,
+  COMBO_MILESTONE, DART, ELITE, EMBER, FIELD, FORGE_BONUS, FORGE_CALM_SECONDS,
+  FORGE_EVERY_EMBERS, GOLDEN, HITSTOP, HULL, KEYS, METEOR, NOVA, OVERDRIVE,
+  SHIP, SPAWN, UPGRADES, VEIN, WIN_STARS,
 } from './config.js';
 import {
-  burstEmber, burstGolden, burstHit, burstNova, makeShip, spawnEmber, spawnFloater,
-  spawnParticle, spawnRock, spawnSmallRocks, updateEntities,
+  burstEmber, burstGolden, burstHit, burstNova, makeShip, spawnEmber,
+  spawnEmberVein, spawnFloater, spawnMeteor, spawnParticle, spawnRock,
+  spawnSmallRocks, updateEntities,
 } from './entities.js';
 import { chance, mulberry32, range } from './random.js';
 
@@ -74,8 +76,14 @@ export function createWorld(seed) {
     particles: [],
     floaters: [],
     blasts: [],
+    veins: [],
+    meteors: [],
     novaRing: null,
-    spawnTimers: { ember: 0.4, rock: 1.2, chaser: 6, weaver: 7, splitter: 8, mine: 9, sweeper: 10 },
+    spawnTimers: { ember: 0.4, rock: 1.2, chaser: 6, weaver: 7, splitter: 8, mine: 9, dart: 11, sweeper: 10 },
+    veinTimer: VEIN.firstInSeconds,
+    meteorTimer: 4,
+    hitStop: 0,
+    elite: false,
     calmTimer: 0,
     hintTimer: 0,
     shake: 0,
@@ -156,6 +164,8 @@ export function fireNova(state, audio) {
     spawnFloater(state, ship.x, ship.y - 34, `NOVA +${gained}`, '#7ef9ff');
   }
   state.shake = Math.max(state.shake, 6);
+  // A nova freezes the world for a beat: the blast lands, then play resumes.
+  state.hitStop = Math.max(state.hitStop, HITSTOP.novaSeconds);
   return true;
 }
 
@@ -179,6 +189,15 @@ function collectEmber(state, audio, ember) {
   const gained = Math.round(EMBER.baseScore * multiplier) + (golden ? GOLDEN.score : 0);
   state.score += gained;
   state.core = Math.min(state.upg.coreCap, state.core + EMBER.corePerPickup);
+  // A combo milestone is an event: a big centre floater, a golden burst and
+  // a rising sound, so a hot streak feels like one. Only one milestone
+  // floater shows at a time — an older one is replaced, never doubled.
+  if (state.combo > 0 && state.combo % COMBO_MILESTONE === 0) {
+    state.floaters = state.floaters.filter((f) => !f.text.startsWith('COMBO x'));
+    spawnFloater(state, FIELD.width / 2, FIELD.height * 0.3, `COMBO x${state.combo}!`, '#ffd700');
+    spawnParticle(state, state.ship.x, state.ship.y, { count: 16, color: '#ffd700', speed: 240, size: 3, life: 0.6 });
+    if (audio) audio.combo(state.combo);
+  }
   if (golden) {
     state.stats.golden += 1;
     spawnFloater(state, ember.x, ember.y - 14, `GOLDEN +${gained}`, '#ffd700');
@@ -252,7 +271,14 @@ function forgeStar(state, audio) {
     return;
   }
   state.wave += 1;
+  // Every fifth wave is ELITE: faster spawns, faster rocks, and a banner
+  // that says so. Wave 5 is the last wave before the Beacon, so a run's
+  // climax is an elite wave.
+  state.elite = state.wave % ELITE.everyWaves === 0;
   setBanner(state, `WAVE ${state.wave}`, waveSubtitle(state.wave));
+  if (state.elite) {
+    setBanner(state, `WAVE ${state.wave} — ELITE`, 'Faster. Meaner. Richer.');
+  }
   if (state.wave % 3 === 0) {
     state.storm = 5;
     setBanner(state, `WAVE ${state.wave} — EMBER STORM`, 'Rich pickings. Fly fast, fly careful.');
@@ -266,7 +292,7 @@ function forgeStar(state, audio) {
 function waveSubtitle(wave) {
   if (wave === 2) return 'Chasers inbound — they hunt you.';
   if (wave === 3) return 'Weavers block the lanes.';
-  if (wave === 4) return 'Splitters break apart. Mines arm.';
+  if (wave === 4) return 'Splitters break apart. Mines arm. Darts streak.';
   if (wave === 6) return 'Sweepers cross the field.';
   return 'Faster. Meaner. Richer.';
 }
@@ -311,6 +337,8 @@ function hitShip(state, audio, hazard) {
   state.ship.invulnerable = SHIP.invulnerableSeconds;
   state.shake = 14;
   state.hitFlash = 1;
+  // A hit freezes the world for a beat: the impact lands, then play resumes.
+  state.hitStop = Math.max(state.hitStop, HITSTOP.hitSeconds);
   burstHit(state, state.ship.x, state.ship.y);
   if (audio) audio.hit();
   // The hazard shatters on impact; the ship is knocked away from it.
@@ -380,6 +408,8 @@ function spawnStep(state, dt) {
   if (state.calmTimer > 0) return;
   const t = state.spawnTimers;
   const storm = state.storm > 0;
+  // An elite wave paces everything faster.
+  const pace = state.elite ? ELITE.spawnFactor : 1;
   const rockInterval = Math.max(
     SPAWN.minRockInterval,
     SPAWN.rockInterval * Math.pow(SPAWN.waveIntervalFactor, state.wave - 1),
@@ -387,7 +417,13 @@ function spawnStep(state, dt) {
   t.ember -= dt;
   if (t.ember <= 0) {
     spawnEmber(state);
-    t.ember = SPAWN.emberInterval * (storm ? 0.5 : 1) * (0.85 + state.rng() * 0.3);
+    t.ember = SPAWN.emberInterval * pace * (storm ? 0.5 : 1) * (0.85 + state.rng() * 0.3);
+  }
+  // An ember vein on a slow clock: a rich cluster worth diving for.
+  state.veinTimer -= dt;
+  if (state.veinTimer <= 0) {
+    spawnEmberVein(state);
+    state.veinTimer = VEIN.intervalSeconds * (0.85 + state.rng() * 0.3);
   }
   t.rock -= dt;
   if (t.rock <= 0) {
@@ -398,39 +434,44 @@ function spawnStep(state, dt) {
     else if (state.wave >= 4 && roll < 0.34) kind = 'splitter';
     else if (state.wave >= 2 && roll < 0.52) kind = 'chaser';
     spawnRock(state, kind);
-    t.rock = rockInterval * (storm ? 0.7 : 1) * (0.8 + state.rng() * 0.4);
+    t.rock = rockInterval * pace * (storm ? 0.7 : 1) * (0.8 + state.rng() * 0.4);
   }
   if (state.wave >= 2) {
     t.chaser -= dt;
     if (t.chaser <= 0) {
       spawnRock(state, 'chaser');
-      t.chaser = SPAWN.chaserInterval * (0.85 + state.rng() * 0.3);
+      t.chaser = SPAWN.chaserInterval * pace * (0.85 + state.rng() * 0.3);
     }
   }
   if (state.wave >= 3) {
     t.weaver -= dt;
     if (t.weaver <= 0) {
       spawnRock(state, 'weaver');
-      t.weaver = SPAWN.weaverInterval * (0.85 + state.rng() * 0.3);
+      t.weaver = SPAWN.weaverInterval * pace * (0.85 + state.rng() * 0.3);
     }
   }
   if (state.wave >= 4) {
     t.splitter -= dt;
     if (t.splitter <= 0) {
       spawnRock(state, 'splitter');
-      t.splitter = SPAWN.splitterInterval * (0.85 + state.rng() * 0.3);
+      t.splitter = SPAWN.splitterInterval * pace * (0.85 + state.rng() * 0.3);
     }
     t.mine -= dt;
     if (t.mine <= 0) {
       spawnRock(state, 'mine');
-      t.mine = SPAWN.mineInterval * (0.85 + state.rng() * 0.3);
+      t.mine = SPAWN.mineInterval * pace * (0.85 + state.rng() * 0.3);
+    }
+    t.dart -= dt;
+    if (t.dart <= 0) {
+      spawnRock(state, 'dart');
+      t.dart = SPAWN.dartInterval * pace * (0.85 + state.rng() * 0.3);
     }
   }
   if (state.wave >= 6) {
     t.sweeper -= dt;
     if (t.sweeper <= 0) {
       spawnRock(state, 'sweeper');
-      t.sweeper = SPAWN.sweeperInterval * (0.85 + state.rng() * 0.3);
+      t.sweeper = SPAWN.sweeperInterval * pace * (0.85 + state.rng() * 0.3);
     }
   }
 }
@@ -474,6 +515,12 @@ function toggleMute(state, audio) {
 // One fixed step. `input` is the live input object, or a stub with the same
 // shape (axis, consume, consumeAny, mouse) when a screenshot scene drives it.
 export function updateWorld(state, input, audio, dt) {
+  // Hit-stop: a hit or a nova freezes the world for a beat. The freeze is
+  // the punch — the timer ticks down and nothing else moves.
+  if (state.hitStop > 0) {
+    state.hitStop -= dt;
+    return;
+  }
   state.time += dt;
   if (state.shake > 0) state.shake = Math.max(0, state.shake - dt * 30);
   if (state.hitFlash > 0) state.hitFlash = Math.max(0, state.hitFlash - dt * 1.8);
@@ -571,6 +618,12 @@ export function updateWorld(state, input, audio, dt) {
   if (state.hintTimer > 0) state.hintTimer -= dt;
   if (state.calmTimer > 0) state.calmTimer -= dt;
   if (state.storm > 0) state.storm -= dt;
+  // Shooting stars: a background streak every few seconds, for depth.
+  state.meteorTimer -= dt;
+  if (state.meteorTimer <= 0) {
+    spawnMeteor(state);
+    state.meteorTimer = range(state.rng, METEOR.intervalMin, METEOR.intervalMax);
+  }
   if (state.comboTimer > 0) {
     state.comboTimer -= dt;
     if (state.comboTimer <= 0) state.combo = 0;
