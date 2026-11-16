@@ -92,6 +92,32 @@ export function createAudio() {
       });
     },
 
+    upgrade() {
+      [440, 587, 880].forEach((frequency, i) => {
+        this.tone({ frequency, duration: 0.16, type: 'square', volume: 0.22, delay: i * 0.07 });
+      });
+    },
+
+    win() {
+      [523, 659, 784, 1047, 1319, 1568].forEach((frequency, i) => {
+        this.tone({ frequency, duration: 0.3, type: 'triangle', volume: 0.4, delay: i * 0.12 });
+      });
+    },
+
+    golden() {
+      this.tone({ frequency: 1047, endFrequency: 2093, duration: 0.18, type: 'sine', volume: 0.5 });
+      this.tone({ frequency: 1568, duration: 0.12, type: 'triangle', volume: 0.2, delay: 0.05 });
+    },
+
+    shield() {
+      this.tone({ frequency: 660, endFrequency: 990, duration: 0.2, type: 'sine', volume: 0.4 });
+    },
+
+    shieldBreak() {
+      this.tone({ frequency: 990, endFrequency: 330, duration: 0.25, type: 'triangle', volume: 0.4 });
+      this.burst({ duration: 0.2, volume: 0.4, frequency: 2400 });
+    },
+
     gameOver() {
       [392, 311, 233, 175].forEach((frequency, i) => {
         this.tone({ frequency, duration: 0.3, type: 'triangle', volume: 0.35, delay: i * 0.14 });
