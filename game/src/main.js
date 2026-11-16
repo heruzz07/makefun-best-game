@@ -95,6 +95,12 @@ if (shot !== null) {
     const elapsed = Math.min(0.25, (now - last) / 1000);
     last = now;
     accumulator += elapsed;
+    // Snapshot the edge-triggered presses and click BEFORE the world reads
+    // them. A press that arrives during this frame (while drawing, which is
+    // the slow part on a weak machine) must survive to the next frame, not
+    // be wiped by the end-of-frame clear before the world ever sees it.
+    const pendingPresses = new Set(input.pressed);
+    const clickedAtStart = input.mouse.clicked;
     let steps = 0;
     while (accumulator >= STEP && steps < 4) {
       updateWorld(world, input, audio, STEP);
@@ -102,9 +108,12 @@ if (shot !== null) {
       steps += 1;
     }
     if (steps === 4) accumulator = 0;
+    // Clear only what was pending when the frame started (and not already
+    // consumed): anything pressed during the frame stays for the next one.
+    for (const code of pendingPresses) input.pressed.delete(code);
+    if (clickedAtStart) input.mouse.clicked = false;
     drawFrame();
     announce();
-    input.endFrame();
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
